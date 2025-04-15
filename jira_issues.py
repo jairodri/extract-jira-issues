@@ -5,6 +5,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 from webdriver_manager.chrome import ChromeDriverManager
+import pandas as pd
 import time
 import os
 from dotenv import load_dotenv
@@ -90,6 +91,42 @@ def navigate_to_url(driver, url, wait_element=None, timeout=10):
     return page_title
 
 
+def extract_jira_issues(driver):
+    """
+    Extracts JIRA issue keys from the issuetable and stores them in a pandas DataFrame
+
+    Args:
+        driver (WebDriver): Chrome WebDriver instance with JIRA page loaded
+
+    Returns:
+        DataFrame: Pandas DataFrame containing the issue keys
+    """
+    print("Extrayendo issues de JIRA desde la tabla...")
+
+    # Esperar a que la tabla de issues esté presente
+    WebDriverWait(driver, 10).until(
+        EC.presence_of_element_located((By.ID, "issuetable"))
+    )
+
+    # Encontrar todas las filas en el tbody de la tabla
+    rows = driver.find_elements(By.CSS_SELECTOR, "#issuetable tbody tr")
+
+    issue_keys = []
+
+    # Extraer el atributo data-issuekey de cada fila
+    for row in rows:
+        issue_key = row.get_attribute("data-issuekey")
+        if issue_key:
+            issue_keys.append(issue_key)
+
+    # Crear un DataFrame con los issue keys recolectados
+    df = pd.DataFrame({"Issue Key": issue_keys})
+
+    print(f"Se encontraron {len(issue_keys)} issues de JIRA")
+
+    return df
+
+
 def main():
     # Load environment variables from .env file
     load_dotenv()
@@ -110,8 +147,12 @@ def main():
         # Navigate to first page with explicit wait for the issue table
         navigate_to_url(driver, first_url, wait_element=wait_element, timeout=timeout)
 
-        # Example of what you might do after navigation:
-        print("Page loaded successfully with the issue table present.")
+        # Extraer issues de JIRA en un DataFrame
+        jira_issues_df = extract_jira_issues(driver)
+
+        # Imprimir el DataFrame
+        print("\nDataFrame de Issues de JIRA:")
+        print(jira_issues_df)
 
         # Wait for user input before closing
         input("Press Enter to close the browser...")
