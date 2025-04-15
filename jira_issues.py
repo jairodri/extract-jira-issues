@@ -93,13 +93,15 @@ def navigate_to_url(driver, url, wait_element=None, timeout=10):
 
 def extract_jira_issues(driver):
     """
-    Extracts JIRA issue keys from the issuetable and stores them in a pandas DataFrame
+    Extracts JIRA issue keys, links, summaries, statuses, priorities, customer object IDs
+    and assignees from the issuetable and stores them in a pandas DataFrame
 
     Args:
         driver (WebDriver): Chrome WebDriver instance with JIRA page loaded
 
     Returns:
-        DataFrame: Pandas DataFrame containing the issue keys
+        DataFrame: Pandas DataFrame containing the issue keys, links, summaries, statuses,
+        priorities, customer object IDs and assignees
     """
     print("Extrayendo issues de JIRA desde la tabla...")
 
@@ -112,15 +114,165 @@ def extract_jira_issues(driver):
     rows = driver.find_elements(By.CSS_SELECTOR, "#issuetable tbody tr")
 
     issue_keys = []
+    issue_links = []
+    summaries = []
+    statuses = []
+    priorities = []
+    customer_object_ids = []
+    assignees = []
+    created_dates = []
+    classifications = []
 
-    # Extraer el atributo data-issuekey de cada fila
+    # Extraer el atributo data-issuekey de cada fila y el link de la issue
     for row in rows:
+        # Get the issue key
         issue_key = row.get_attribute("data-issuekey")
+
+        # Get the issue link
+        issue_link = ""
+        try:
+            # Find the td with class "issuekey"
+            issuekey_td = row.find_element(By.CSS_SELECTOR, "td.issuekey")
+
+            # Find the a with class "issue-link" inside the td
+            issue_link_element = issuekey_td.find_element(
+                By.CSS_SELECTOR, "a.issue-link"
+            )
+
+            # Get the href attribute
+            issue_link = issue_link_element.get_attribute("href")
+        except Exception as e:
+            print(f"Error getting link for issue {issue_key}: {e}")
+
+        # Get the summary
+        summary = ""
+        try:
+            # Find the td with class "summary"
+            summary_td = row.find_element(By.CSS_SELECTOR, "td.summary")
+
+            # Find the p element inside the summary td
+            summary_element = summary_td.find_element(By.CSS_SELECTOR, "p")
+
+            # Get the text content
+            summary = summary_element.text.strip()
+        except Exception as e:
+            print(f"Error getting summary for issue {issue_key}: {e}")
+
+        # Get the status
+        status = ""
+        try:
+            # Find the td with class "status"
+            status_td = row.find_element(By.CSS_SELECTOR, "td.status")
+
+            # Find the span element inside the status td
+            status_element = status_td.find_element(By.CSS_SELECTOR, "span")
+
+            # Get the text content
+            status = status_element.text.strip()
+        except Exception as e:
+            print(f"Error getting status for issue {issue_key}: {e}")
+
+        # Get the priority
+        priority = ""
+        try:
+            # Find the td with class "priority"
+            priority_td = row.find_element(By.CSS_SELECTOR, "td.priority")
+
+            # Find the img element inside the priority td
+            priority_img = priority_td.find_element(By.CSS_SELECTOR, "img")
+
+            # Get the alt attribute
+            priority = priority_img.get_attribute("alt").strip()
+        except Exception as e:
+            print(f"Error getting priority for issue {issue_key}: {e}")
+
+        # Get the Customer Object ID
+        customer_object_id = ""
+        try:
+            # Find the td with class "customfield_14400"
+            customfield_td = row.find_element(By.CSS_SELECTOR, "td.customfield_14400")
+
+            # Get the text content directly from the td
+            customer_object_id = customfield_td.text.strip()
+        except Exception as e:
+            print(f"Error getting Customer Object ID for issue {issue_key}: {e}")
+
+        # Get the Assignee
+        assignee = ""
+        try:
+            # Find the td with class "assignee"
+            assignee_td = row.find_element(By.CSS_SELECTOR, "td.assignee")
+
+            # Check if there's an <em> element (sin asignar)
+            try:
+                em_element = assignee_td.find_element(By.CSS_SELECTOR, "em")
+                assignee = em_element.text.strip()
+            except:
+                # If no <em>, try to find <a> element (user assigned)
+                try:
+                    a_element = assignee_td.find_element(
+                        By.CSS_SELECTOR, "a.user-hover"
+                    )
+                    assignee = a_element.text.strip()
+                except:
+                    # If neither is found, get direct text from td
+                    assignee = assignee_td.text.strip()
+
+            # Get the Created date
+            created_date = ""
+            try:
+                # Find the td with class "created"
+                created_td = row.find_element(By.CSS_SELECTOR, "td.created")
+
+                # Find the time element inside the created td
+                time_element = created_td.find_element(By.CSS_SELECTOR, "time")
+
+                # Get the datetime attribute
+                created_date = time_element.get_attribute("datetime")
+            except Exception as e:
+                print(f"Error getting creation date for issue {issue_key}: {e}")
+
+            # Get the Classification
+            classification = ""
+            try:
+                # Find the td with class "customfield_15400"
+                customfield_td = row.find_element(
+                    By.CSS_SELECTOR, "td.customfield_15400"
+                )
+
+                # Get the text content directly from the td
+                classification = customfield_td.text.strip()
+            except Exception as e:
+                print(f"Error getting Classification for issue {issue_key}: {e}")
+
+        except Exception as e:
+            print(f"Error getting assignee for issue {issue_key}: {e}")
+
         if issue_key:
             issue_keys.append(issue_key)
+            issue_links.append(issue_link)
+            summaries.append(summary)
+            statuses.append(status)
+            priorities.append(priority)
+            customer_object_ids.append(customer_object_id)
+            assignees.append(assignee)
+            created_dates.append(created_date)
+            classifications.append(classification)
 
-    # Crear un DataFrame con los issue keys recolectados
-    df = pd.DataFrame({"Issue Key": issue_keys})
+    # Crear un DataFrame con todos los datos recolectados
+    df = pd.DataFrame(
+        {
+            "Issue Key": issue_keys,
+            "Issue link": issue_links,
+            "Summary": summaries,
+            "Status": statuses,
+            "Priority": priorities,
+            "Customer Object ID": customer_object_ids,
+            "Assignee": assignees,
+            "Created": created_dates,
+            "Classification": classifications,
+        }
+    )
 
     print(f"Se encontraron {len(issue_keys)} issues de JIRA")
 
@@ -154,8 +306,8 @@ def main():
         print("\nDataFrame de Issues de JIRA:")
         print(jira_issues_df)
 
-        # Wait for user input before closing
-        input("Press Enter to close the browser...")
+        # # Wait for user input before closing
+        # input("Press Enter to close the browser...")
 
     finally:
         # Always close the driver to prevent resource leaks
