@@ -6,9 +6,13 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 from webdriver_manager.chrome import ChromeDriverManager
 import pandas as pd
-import time
 import os
 from dotenv import load_dotenv
+from datetime import datetime, timezone
+from openpyxl import Workbook
+from openpyxl.utils import get_column_letter
+from openpyxl.styles import Font, PatternFill
+from dateutil import parser
 
 
 def create_chrome_driver(headless=False):
@@ -114,6 +118,7 @@ def extract_jira_issues(driver):
     rows = driver.find_elements(By.CSS_SELECTOR, "#issuetable tbody tr")
 
     issue_keys = []
+    issue_types = []
     issue_links = []
     summaries = []
     statuses = []
@@ -143,6 +148,20 @@ def extract_jira_issues(driver):
             issue_link = issue_link_element.get_attribute("href")
         except Exception as e:
             print(f"Error getting link for issue {issue_key}: {e}")
+
+        # Get the type of issue
+        issue_type = ""
+        try:
+            # Find the td with class "issuetype"
+            issue_type_td = row.find_element(By.CSS_SELECTOR, "td.issuetype")
+
+            # Find the img element inside the issuetype td
+            issue_type_img = issue_type_td.find_element(By.CSS_SELECTOR, "img")
+
+            # Get the alt attribute
+            issue_type = issue_type_img.get_attribute("alt").strip()
+        except Exception as e:
+            print(f"Error getting issuetype for issue {issue_key}: {e}")
 
         # Get the summary
         summary = ""
@@ -217,39 +236,51 @@ def extract_jira_issues(driver):
                 except:
                     # If neither is found, get direct text from td
                     assignee = assignee_td.text.strip()
-
-            # Get the Created date
-            created_date = ""
-            try:
-                # Find the td with class "created"
-                created_td = row.find_element(By.CSS_SELECTOR, "td.created")
-
-                # Find the time element inside the created td
-                time_element = created_td.find_element(By.CSS_SELECTOR, "time")
-
-                # Get the datetime attribute
-                created_date = time_element.get_attribute("datetime")
-            except Exception as e:
-                print(f"Error getting creation date for issue {issue_key}: {e}")
-
-            # Get the Classification
-            classification = ""
-            try:
-                # Find the td with class "customfield_15400"
-                customfield_td = row.find_element(
-                    By.CSS_SELECTOR, "td.customfield_15400"
-                )
-
-                # Get the text content directly from the td
-                classification = customfield_td.text.strip()
-            except Exception as e:
-                print(f"Error getting Classification for issue {issue_key}: {e}")
-
         except Exception as e:
             print(f"Error getting assignee for issue {issue_key}: {e}")
 
+        # Get the Created date
+        created_date = ""
+        try:
+            # Find the td with class "created"
+            created_td = row.find_element(By.CSS_SELECTOR, "td.created")
+
+            # Find the time element inside the created td
+            time_element = created_td.find_element(By.CSS_SELECTOR, "time")
+
+            # Get the datetime attribute
+            iso_date = time_element.get_attribute("datetime")
+
+            # Convertir string ISO a objeto datetime de Python sin zona horaria
+            if iso_date:
+                try:
+                    # Parsear la fecha ISO
+                    dt_with_tz = parser.isoparse(iso_date)
+                    # Convertir a UTC y eliminar la información de zona horaria
+                    created_date = dt_with_tz.astimezone(timezone.utc).replace(
+                        tzinfo=None
+                    )
+                except Exception as e:
+                    print(f"Error converting date format for issue {issue_key}: {e}")
+                    created_date = iso_date  # Fallback al formato original si hay error
+
+        except Exception as e:
+            print(f"Error getting Classification for issue {issue_key}: {e}")
+
+        # Get the Classification
+        classification = ""
+        try:
+            # Find the td with class "customfield_15400"
+            customfield_td = row.find_element(By.CSS_SELECTOR, "td.customfield_15400")
+
+            # Get the text content directly from the td
+            classification = customfield_td.text.strip()
+        except Exception as e:
+            print(f"Error getting Classification for issue {issue_key}: {e}")
+
         if issue_key:
             issue_keys.append(issue_key)
+            issue_types.append(issue_type)
             issue_links.append(issue_link)
             summaries.append(summary)
             statuses.append(status)
@@ -263,6 +294,7 @@ def extract_jira_issues(driver):
     df = pd.DataFrame(
         {
             "Issue Key": issue_keys,
+            "Issue Type": issue_types,
             "Issue link": issue_links,
             "Summary": summaries,
             "Status": statuses,
@@ -277,6 +309,50 @@ def extract_jira_issues(driver):
     print(f"Se encontraron {len(issue_keys)} issues de JIRA")
 
     return df
+
+
+def adjust_column_widths(sheet, max_width=80):
+    """
+    Adjusts the width of each column in the Excel sheet based on the maximum width of the data and header values.
+
+    Parameters:
+    -----------
+    sheet : openpyxl.worksheet.worksheet.Worksheet
+        The worksheet where column widths need to be adjusted.
+
+    max_width : int, optional (default=80)
+        The maximum allowed width for any column. If the calculated width exceeds this value,
+        the column width will be set to this maximum value.
+
+    Returns:
+    --------
+    None
+    """
+    for col in sheet.columns:
+        max_length = 0
+        column = col[0].column_letter  # Get the column name
+
+        # Calculate the width required by the header (considering formatting)
+        header_length = len(str(col[0].value))
+        adjusted_header_length = (
+            header_length * 1.5
+        )  # Factor to account for bold and larger font size
+
+        # Compare the header length with the lengths of the data values
+        for cell in col:
+            try:
+                cell_length = len(str(cell.value))
+                if cell_length > max_length:
+                    max_length = cell_length
+            except:
+                pass
+
+        # Use the greater of the header length or data length for column width
+        max_length = max(max_length, adjusted_header_length)
+
+        # Adjust the column width and apply the max_width limit
+        adjusted_width = min(max_length + 2, max_width)
+        sheet.column_dimensions[column].width = adjusted_width
 
 
 def main():
@@ -302,12 +378,76 @@ def main():
         # Extraer issues de JIRA en un DataFrame
         jira_issues_df = extract_jira_issues(driver)
 
-        # Imprimir el DataFrame
-        print("\nDataFrame de Issues de JIRA:")
-        print(jira_issues_df)
+        # Generar un nombre de archivo con la fecha actual
+        current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+        excel_filename = f"jira_issues_{current_time}.xlsx"
 
-        # # Wait for user input before closing
-        # input("Press Enter to close the browser...")
+        print(f"\nCreando archivo Excel: {excel_filename}")
+
+        # Usar ExcelWriter para tener más control sobre el formato
+        with pd.ExcelWriter(excel_filename, engine="openpyxl") as writer:
+            # Guardar el DataFrame en la hoja "JIRA Issues"
+            jira_issues_df.to_excel(writer, sheet_name="JIRA Issues", index=False)
+
+            # Obtener el objeto workbook y la hoja activa
+            workbook = writer.book
+            worksheet = writer.sheets["JIRA Issues"]
+
+            # Aplicar formatos a la cabecera
+            header_font = Font(bold=True)
+            header_fill = PatternFill(
+                start_color="DDEBF7", end_color="DDEBF7", fill_type="solid"
+            )
+
+            # Dar formato a la fila de encabezado
+            for cell in worksheet[1]:
+                cell.font = header_font
+                cell.fill = header_fill
+
+            # Convertir enlaces de la columna "Issue link" a hipervínculos y dar formato a la columna de fechas
+            link_col_index = None
+            date_col_index = None
+
+            # Encontrar las columnas relevantes
+            for i, header in enumerate(worksheet[1], 1):
+                if header.value == "Issue link":
+                    link_col_index = i
+                elif header.value == "Created":
+                    date_col_index = i
+
+            # Si encontramos la columna de enlaces, convertirlos a hipervínculos
+            if link_col_index:
+                link_col_letter = get_column_letter(link_col_index)
+
+                # Para cada fila de datos (desde la 2 porque la 1 es el encabezado)
+                for row in range(2, worksheet.max_row + 1):
+                    cell = worksheet[f"{link_col_letter}{row}"]
+                    if cell.value and isinstance(cell.value, str):
+                        # Establecer el hipervínculo
+                        cell.hyperlink = cell.value
+                        # Aplicar estilo de hipervínculo (azul subrayado)
+                        cell.style = "Hyperlink"
+
+            # Si encontramos la columna de fechas, asegurarse de que se muestran correctamente
+            if date_col_index:
+                date_col_letter = get_column_letter(date_col_index)
+
+                # Para cada fila de datos (desde la 2 porque la 1 es el encabezado)
+                for row in range(2, worksheet.max_row + 1):
+                    cell = worksheet[f"{date_col_letter}{row}"]
+                    if cell.value:
+                        # Aplicar formato de fecha y hora
+                        cell.number_format = "yyyy-mm-dd hh:mm:ss"
+
+            # Ajustar el ancho de las columnas basado en el contenido
+            adjust_column_widths(worksheet)
+
+            # Apply a filter to all columns
+            worksheet.auto_filter.ref = worksheet.dimensions
+
+        print(f"Archivo Excel creado y formateado exitosamente: {excel_filename}")
+
+        # input("Presione Enter para salir...")
 
     finally:
         # Always close the driver to prevent resource leaks
