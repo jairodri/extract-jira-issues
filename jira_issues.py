@@ -13,6 +13,7 @@ from openpyxl import Workbook
 from openpyxl.utils import get_column_letter
 from openpyxl.styles import Font, PatternFill
 from dateutil import parser
+from urllib.parse import quote
 
 
 def create_chrome_driver(headless=False):
@@ -362,18 +363,27 @@ def main():
     headless = os.getenv("HEADLESS_MODE", "False").lower() == "true"
     timeout = int(os.getenv("WAIT_TIME", "10"))
 
-    # Get URLs from environment variables
-    first_url = os.getenv("JIRA_SIN_ASIGNAR")
-
     # Element to wait for - can be defined in .env
     wait_element = os.getenv("WAIT_ELEMENT", ".issue-table-wrapper")
+
+    # Get URLs from environment variables
+    url_base = os.getenv("JIRA_URL_BASE")
+    jira_filter = os.getenv("JIRA_SIN_ASIGNAR")
+
+    # Codificar el filtro JQL para uso seguro en URL
+    jira_filter_encoded = quote(jira_filter) if jira_filter else ""
+
+    # Construir la URL completa con el filtro codificado
+    complete_url = f"{url_base}?jql={jira_filter_encoded}"
 
     # Create the driver
     driver = create_chrome_driver(headless=headless)
 
     try:
         # Navigate to first page with explicit wait for the issue table
-        navigate_to_url(driver, first_url, wait_element=wait_element, timeout=timeout)
+        navigate_to_url(
+            driver, complete_url, wait_element=wait_element, timeout=timeout
+        )
 
         # Extraer issues de JIRA en un DataFrame
         jira_issues_df = extract_jira_issues(driver)
