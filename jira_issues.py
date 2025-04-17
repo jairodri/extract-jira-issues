@@ -402,7 +402,12 @@ def adjust_column_widths(sheet, max_width=80):
         sheet.column_dimensions[column].width = adjusted_width
 
 
-def create_outlook_draft(excel_filename, recipient_list=None, subject=None, body=None):
+def create_outlook_draft(
+    excel_filename,
+    recipient_list="equipo.desarrollo@empresa.com",
+    subject=None,
+    body=None,
+):
     """
     Crea un borrador de correo en Outlook con el archivo Excel adjunto.
 
@@ -421,30 +426,6 @@ def create_outlook_draft(excel_filename, recipient_list=None, subject=None, body
         if not file_path.exists():
             print(f"Error: No se encontró el archivo {excel_filename}")
             return False
-
-        # Valores por defecto
-        if recipient_list is None:
-            recipient_list = "equipo.desarrollo@empresa.com"
-        if subject is None:
-            subject = f"Estado de Issues JIRA - {datetime.now().strftime('%d/%m/%Y')}"
-        if body is None:
-            body = f"""
-            <html>
-            <body>
-            <p>Estimado equipo,</p>
-            <p>Adjunto el informe actualizado de issues en JIRA a fecha {datetime.now().strftime('%d/%m/%Y')}.</p>
-            <p>Este archivo contiene información sobre:</p>
-            <ul>
-                <li>Issues sin asignar</li>
-                <li>Issues en curso</li>
-                <li>Estado actual de cada issue</li>
-            </ul>
-            <p>Por favor, revisen la información y actualicen el estado de sus tareas asignadas.</p>
-            <p>Saludos,</p>
-            <p>Equipo de Gestión</p>
-            </body>
-            </html>
-            """
 
         print(f"Creando borrador de correo en Outlook...")
 
@@ -466,18 +447,10 @@ def create_outlook_draft(excel_filename, recipient_list=None, subject=None, body
         # Guardar como borrador
         mail.Save()
 
-        print(
-            f"Borrador de correo creado exitosamente con el archivo {excel_filename} adjunto."
-        )
         print(f"Puede encontrar el borrador en la carpeta 'Borradores' de Outlook.")
 
         return True
 
-    except ImportError:
-        print(
-            "Error: No se pudo importar win32com. Instale la biblioteca con: pip install pywin32"
-        )
-        return False
     except Exception as e:
         print(f"Error al crear el borrador de correo: {e}")
         return False
@@ -605,27 +578,34 @@ def main():
 
             print(f"Archivo Excel creado y formateado exitosamente: {excel_filename}")
 
-            # Crear borrador de correo en Outlook con el Excel adjunto
-            recipients = load_mail_recipients()
-            create_outlook_draft(
-                excel_filename=excel_filename,
-                recipient_list=recipients,
-                subject=f"Issues JIRA - Informe {current_time}",
-                body=f"""
-                <html>
-                <body>
-                <p>Hola equipo,</p>
-                <p>Adjunto el informe actualizado de issues en JIRA generado el {datetime.now().strftime('%d/%m/%Y %H:%M')}.</p>
-                <p>El informe contiene {sum(len(df) for df in dataframes_dict.values())} issues distribuidas en {len(dataframes_dict)} pestañas:</p>
-                <ul>
-                {"".join(f'<li>{name}: {len(df)} issues</li>' for name, df in dataframes_dict.items())}
-                </ul>
-                <p>Por favor, revisen las tareas pendientes y actualicen el estado en JIRA según corresponda.</p>
-                <p>Saludos,</p>
-                </body>
-                </html>
-                """,
-            )
+        # Crear borrador de correo en Outlook con el Excel adjunto
+        recipients = load_mail_recipients()
+        # Get subject for email
+        subject = os.getenv("MAIL_SUBJECT")
+
+        # Cargar la plantilla del cuerpo del email
+        body_template = os.getenv("MAIL_BODY_TEMPLATE", "")
+
+        # Generar la lista de pestañas dinámicamente
+        pestanas_html = "<ul>\n"
+        for name, df in dataframes_dict.items():
+            pestanas_html += f"<li>{name}: {len(df)} issues</li>\n"
+        pestanas_html += "</ul>"
+
+        # Reemplazar los marcadores de posición con valores dinámicos
+        body_formateado = body_template.format(
+            FECHA=datetime.now().strftime("%d/%m/%Y %H:%M"),
+            NUM_ISSUES=sum(len(df) for df in dataframes_dict.values()),
+            NUM_PESTANAS=len(dataframes_dict),
+            LISTA_PESTANAS=pestanas_html,
+        )
+
+        create_outlook_draft(
+            excel_filename=excel_filename,
+            recipient_list=recipients,
+            subject=f"{subject}{current_time}",
+            body=body_formateado,
+        )
 
     finally:
         # Always close the driver to prevent resource leaks
