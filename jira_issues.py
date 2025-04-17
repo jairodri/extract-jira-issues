@@ -383,104 +383,232 @@ def main():
     # Element to wait for - can be defined in .env
     wait_element = os.getenv("WAIT_ELEMENT", ".issue-table-wrapper")
 
-    # Get URLs from environment variables
+    # Get base URL from environment variables
     url_base = os.getenv("JIRA_URL_BASE")
-    # jira_filter = os.getenv("JIRA_SIN_ASIGNAR")
-    jira_filter = os.getenv("JIRA_FILTER_SIN_CERRAR")
 
-    # Codificar el filtro JQL para uso seguro en URL
-    jira_filter_encoded = quote(jira_filter) if jira_filter else ""
+    # Cargar todos los filtros JIRA disponibles
+    jira_filters = load_jira_filters()
+    print(f"Se han encontrado {len(jira_filters)} filtros JIRA para procesar")
 
-    # Construir la URL completa con el filtro codificado
-    complete_url = f"{url_base}?jql={jira_filter_encoded}"
+    # Diccionario para almacenar los dataframes resultantes
+    dataframes_dict = {}
 
     # Create the driver
     driver = create_chrome_driver(headless=headless)
 
     try:
-        # Navigate to first page with explicit wait for the issue table
-        navigate_to_url(
-            driver, complete_url, wait_element=wait_element, timeout=timeout
-        )
+        # Iterar sobre cada filtro JIRA
+        for filter_name, filter_value in jira_filters.items():
+            print(f"\nProcesando filtro: {filter_name}")
 
-        # Extraer issues de JIRA en un DataFrame
-        jira_issues_df = extract_jira_issues(driver)
+            # Extraer el nombre de la pestaña (eliminando el prefijo JIRA_FILTER_)
+            sheet_name = filter_name.replace("JIRA_FILTER_", "")
+
+            # Codificar el filtro JQL para uso seguro en URL
+            filter_encoded = quote(filter_value) if filter_value else ""
+
+            # Construir la URL completa con el filtro codificado
+            complete_url = f"{url_base}?jql={filter_encoded}"
+
+            # Navigate to page with explicit wait for the issue table
+            navigate_to_url(
+                driver, complete_url, wait_element=wait_element, timeout=timeout
+            )
+
+            # Extraer issues de JIRA en un DataFrame
+            jira_issues_df = extract_jira_issues(driver)
+
+            # Almacenar el DataFrame en el diccionario usando el nombre de la pestaña como clave
+            dataframes_dict[sheet_name] = jira_issues_df
 
         # Generar un nombre de archivo con la fecha actual
         current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
         excel_filename = f"jira_issues_{current_time}.xlsx"
 
-        print(f"\nCreando archivo Excel: {excel_filename}")
+        print(
+            f"\nCreando archivo Excel con {len(dataframes_dict)} pestañas: {excel_filename}"
+        )
 
         # Usar ExcelWriter para tener más control sobre el formato
         with pd.ExcelWriter(excel_filename, engine="openpyxl") as writer:
-            # Guardar el DataFrame en la hoja "JIRA Issues"
-            jira_issues_df.to_excel(writer, sheet_name="JIRA Issues", index=False)
+            # Crear una pestaña por cada DataFrame
+            for sheet_name, df in dataframes_dict.items():
+                print(f"Creando pestaña: {sheet_name} con {len(df)} issues")
 
-            # Obtener el objeto workbook y la hoja activa
-            workbook = writer.book
-            worksheet = writer.sheets["JIRA Issues"]
+                # Guardar el DataFrame en su pestaña correspondiente
+                df.to_excel(writer, sheet_name=sheet_name, index=False)
 
-            # Aplicar formatos a la cabecera
-            header_font = Font(bold=True)
-            header_fill = PatternFill(
-                start_color="DDEBF7", end_color="DDEBF7", fill_type="solid"
-            )
+                # Obtener el objeto worksheet actual
+                worksheet = writer.sheets[sheet_name]
 
-            # Dar formato a la fila de encabezado
-            for cell in worksheet[1]:
-                cell.font = header_font
-                cell.fill = header_fill
+                # Aplicar formatos a la cabecera
+                header_font = Font(bold=True)
+                header_fill = PatternFill(
+                    start_color="DDEBF7", end_color="DDEBF7", fill_type="solid"
+                )
 
-            # Convertir enlaces de la columna "Issue link" a hipervínculos y dar formato a la columna de fechas
-            link_col_index = None
-            date_col_index = None
+                # Dar formato a la fila de encabezado
+                for cell in worksheet[1]:
+                    cell.font = header_font
+                    cell.fill = header_fill
 
-            # Encontrar las columnas relevantes
-            for i, header in enumerate(worksheet[1], 1):
-                if header.value == "Issue link":
-                    link_col_index = i
-                elif header.value == "Created":
-                    date_col_index = i
+                # Convertir enlaces de la columna "Issue link" a hipervínculos y dar formato a la columna de fechas
+                link_col_index = None
+                date_col_index = None
 
-            # Si encontramos la columna de enlaces, convertirlos a hipervínculos
-            if link_col_index:
-                link_col_letter = get_column_letter(link_col_index)
+                # Encontrar las columnas relevantes
+                for i, header in enumerate(worksheet[1], 1):
+                    if header.value == "Issue link":
+                        link_col_index = i
+                    elif header.value == "Created":
+                        date_col_index = i
 
-                # Para cada fila de datos (desde la 2 porque la 1 es el encabezado)
-                for row in range(2, worksheet.max_row + 1):
-                    cell = worksheet[f"{link_col_letter}{row}"]
-                    if cell.value and isinstance(cell.value, str):
-                        # Establecer el hipervínculo
-                        cell.hyperlink = cell.value
-                        # Aplicar estilo de hipervínculo (azul subrayado)
-                        cell.style = "Hyperlink"
+                # Si encontramos la columna de enlaces, convertirlos a hipervínculos
+                if link_col_index:
+                    link_col_letter = get_column_letter(link_col_index)
 
-            # Si encontramos la columna de fechas, asegurarse de que se muestran correctamente
-            if date_col_index:
-                date_col_letter = get_column_letter(date_col_index)
+                    # Para cada fila de datos (desde la 2 porque la 1 es el encabezado)
+                    for row in range(2, worksheet.max_row + 1):
+                        cell = worksheet[f"{link_col_letter}{row}"]
+                        if cell.value and isinstance(cell.value, str):
+                            # Establecer el hipervínculo
+                            cell.hyperlink = cell.value
+                            # Aplicar estilo de hipervínculo (azul subrayado)
+                            cell.style = "Hyperlink"
 
-                # Para cada fila de datos (desde la 2 porque la 1 es el encabezado)
-                for row in range(2, worksheet.max_row + 1):
-                    cell = worksheet[f"{date_col_letter}{row}"]
-                    if cell.value:
-                        # Aplicar formato de fecha y hora
-                        cell.number_format = "yyyy-mm-dd hh:mm:ss"
+                # Si encontramos la columna de fechas, asegurarse de que se muestran correctamente
+                if date_col_index:
+                    date_col_letter = get_column_letter(date_col_index)
 
-            # Ajustar el ancho de las columnas basado en el contenido
-            adjust_column_widths(worksheet)
+                    # Para cada fila de datos (desde la 2 porque la 1 es el encabezado)
+                    for row in range(2, worksheet.max_row + 1):
+                        cell = worksheet[f"{date_col_letter}{row}"]
+                        if cell.value:
+                            # Aplicar formato de fecha y hora
+                            cell.number_format = "yyyy-mm-dd hh:mm:ss"
 
-            # Apply a filter to all columns
-            worksheet.auto_filter.ref = worksheet.dimensions
+                # Ajustar el ancho de las columnas basado en el contenido
+                adjust_column_widths(worksheet)
 
-        print(f"Archivo Excel creado y formateado exitosamente: {excel_filename}")
+                # Apply a filter to all columns
+                worksheet.auto_filter.ref = worksheet.dimensions
 
-        # input("Presione Enter para salir...")
+            print(f"Archivo Excel creado y formateado exitosamente: {excel_filename}")
 
     finally:
         # Always close the driver to prevent resource leaks
         print("Closing browser...")
         driver.quit()
+
+
+# def main():
+#     # Load environment variables from .env file
+#     load_dotenv()
+
+#     headless = os.getenv("HEADLESS_MODE", "False").lower() == "true"
+#     timeout = int(os.getenv("WAIT_TIME", "10"))
+
+#     # Element to wait for - can be defined in .env
+#     wait_element = os.getenv("WAIT_ELEMENT", ".issue-table-wrapper")
+
+#     # Get URLs from environment variables
+#     url_base = os.getenv("JIRA_URL_BASE")
+#     # jira_filter = os.getenv("JIRA_SIN_ASIGNAR")
+#     jira_filter = os.getenv("JIRA_FILTER_SIN_CERRAR")
+
+#     # Codificar el filtro JQL para uso seguro en URL
+#     jira_filter_encoded = quote(jira_filter) if jira_filter else ""
+
+#     # Construir la URL completa con el filtro codificado
+#     complete_url = f"{url_base}?jql={jira_filter_encoded}"
+
+#     # Create the driver
+#     driver = create_chrome_driver(headless=headless)
+
+#     try:
+#         # Navigate to first page with explicit wait for the issue table
+#         navigate_to_url(
+#             driver, complete_url, wait_element=wait_element, timeout=timeout
+#         )
+
+#         # Extraer issues de JIRA en un DataFrame
+#         jira_issues_df = extract_jira_issues(driver)
+
+#         # Generar un nombre de archivo con la fecha actual
+#         current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+#         excel_filename = f"jira_issues_{current_time}.xlsx"
+
+#         print(f"\nCreando archivo Excel: {excel_filename}")
+
+#         # Usar ExcelWriter para tener más control sobre el formato
+#         with pd.ExcelWriter(excel_filename, engine="openpyxl") as writer:
+#             # Guardar el DataFrame en la hoja "JIRA Issues"
+#             jira_issues_df.to_excel(writer, sheet_name="JIRA Issues", index=False)
+
+#             # Obtener el objeto workbook y la hoja activa
+#             workbook = writer.book
+#             worksheet = writer.sheets["JIRA Issues"]
+
+#             # Aplicar formatos a la cabecera
+#             header_font = Font(bold=True)
+#             header_fill = PatternFill(
+#                 start_color="DDEBF7", end_color="DDEBF7", fill_type="solid"
+#             )
+
+#             # Dar formato a la fila de encabezado
+#             for cell in worksheet[1]:
+#                 cell.font = header_font
+#                 cell.fill = header_fill
+
+#             # Convertir enlaces de la columna "Issue link" a hipervínculos y dar formato a la columna de fechas
+#             link_col_index = None
+#             date_col_index = None
+
+#             # Encontrar las columnas relevantes
+#             for i, header in enumerate(worksheet[1], 1):
+#                 if header.value == "Issue link":
+#                     link_col_index = i
+#                 elif header.value == "Created":
+#                     date_col_index = i
+
+#             # Si encontramos la columna de enlaces, convertirlos a hipervínculos
+#             if link_col_index:
+#                 link_col_letter = get_column_letter(link_col_index)
+
+#                 # Para cada fila de datos (desde la 2 porque la 1 es el encabezado)
+#                 for row in range(2, worksheet.max_row + 1):
+#                     cell = worksheet[f"{link_col_letter}{row}"]
+#                     if cell.value and isinstance(cell.value, str):
+#                         # Establecer el hipervínculo
+#                         cell.hyperlink = cell.value
+#                         # Aplicar estilo de hipervínculo (azul subrayado)
+#                         cell.style = "Hyperlink"
+
+#             # Si encontramos la columna de fechas, asegurarse de que se muestran correctamente
+#             if date_col_index:
+#                 date_col_letter = get_column_letter(date_col_index)
+
+#                 # Para cada fila de datos (desde la 2 porque la 1 es el encabezado)
+#                 for row in range(2, worksheet.max_row + 1):
+#                     cell = worksheet[f"{date_col_letter}{row}"]
+#                     if cell.value:
+#                         # Aplicar formato de fecha y hora
+#                         cell.number_format = "yyyy-mm-dd hh:mm:ss"
+
+#             # Ajustar el ancho de las columnas basado en el contenido
+#             adjust_column_widths(worksheet)
+
+#             # Apply a filter to all columns
+#             worksheet.auto_filter.ref = worksheet.dimensions
+
+#         print(f"Archivo Excel creado y formateado exitosamente: {excel_filename}")
+
+#         # input("Presione Enter para salir...")
+
+#     finally:
+#         # Always close the driver to prevent resource leaks
+#         print("Closing browser...")
+#         driver.quit()
 
 
 if __name__ == "__main__":
