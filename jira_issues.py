@@ -9,7 +9,6 @@ import pandas as pd
 import os
 from dotenv import load_dotenv, dotenv_values
 from datetime import datetime, timezone
-from openpyxl import Workbook
 from openpyxl.utils import get_column_letter
 from openpyxl.styles import Font, PatternFill
 from dateutil import parser
@@ -98,45 +97,56 @@ def navigate_to_url(driver, url, wait_element=None, timeout=10):
     return page_title
 
 
-def load_jira_filters():
+def load_jira_filters(filter_pattern=None):
     """
-    Carga todas las variables definidas en el fichero .env que comienzan por "JIRA_FILTER_"
-    y las devuelve en un diccionario.
+    Loads all environment variables defined in the .env file that begin with the specified pattern.
+
+    Args:
+        filter_pattern (str): The pattern to use for filtering environment variables
 
     Returns:
-        dict: Diccionario con las variables y sus valores.
+        dict: A dictionary where keys are the environment variable names and values are their contents.
     """
-    # Cargar todas las variables del archivo .env
+    # Load all variables from the .env file
     env_vars = dotenv_values()
-    # Filtrar las variables que empiezan con "JIRA_FILTER_"
+
+    # Filter variables that start with the specified pattern
     filters = {
-        key: value for key, value in env_vars.items() if key.startswith("JIRA_FILTER_")
+        key: value for key, value in env_vars.items() if key.startswith(filter_pattern)
     }
+
+    print(f"Found {len(filters)} JIRA filters matching pattern '{filter_pattern}'")
+
     return filters
 
 
 def load_mail_recipients():
     """
-    Carga todas las direcciones de correo definidas en el fichero .env
-    que comienzan por "MAIL_TO_" y devuelve una cadena con todas las direcciones
-    separadas por punto y coma para usar en Outlook.
+    Loads all email addresses defined in the .env file that begin with the specified
+    pattern (defined by MAIL_PATTERN environment variable) and returns them as a
+    semicolon-separated string for use in Outlook.
+
+    If MAIL_PATTERN is not defined, uses "MAIL_TO_" as default pattern.
 
     Returns:
-        str: Cadena con todas las direcciones de correo separadas por punto y coma.
+        str: String containing all email addresses separated by semicolons.
     """
-    # Cargar todas las variables del archivo .env
+    # Get the mail pattern from environment variables or use default
+    mail_pattern = os.getenv("MAIL_PATTERN", "MAIL_TO_")
+
+    # Load all variables from the .env file
     env_vars = dotenv_values()
 
-    # Filtrar las variables que empiezan con "MAIL_TO_"
+    # Filter variables that start with the specified pattern
     mail_vars = {
-        key: value for key, value in env_vars.items() if key.startswith("MAIL_TO_")
+        key: value for key, value in env_vars.items() if key.startswith(mail_pattern)
     }
 
-    # Extraer solo los valores (direcciones de correo) y unirlos con punto y coma
+    # Extract only the values (email addresses) and join them with semicolons
     recipients = ";".join(mail_vars.values())
 
     print(
-        f"Se encontraron {len(mail_vars)} direcciones de correo para la lista de distribución"
+        f"Found {len(mail_vars)} email addresses for distribution list matching pattern '{mail_pattern}'"
     )
 
     return recipients
@@ -144,26 +154,37 @@ def load_mail_recipients():
 
 def extract_jira_issues(driver):
     """
-    Extracts JIRA issue keys, links, summaries, statuses, priorities, customer object IDs
-    and assignees from the issuetable and stores them in a pandas DataFrame
+    Extracts JIRA issue information from the issue table and stores it in a pandas DataFrame.
+
+    This function finds all rows in the JIRA issue table and extracts the following data for each issue:
+    - Issue Key (e.g., PROJECT-123)
+    - Issue Type (e.g., Bug, Story, Task)
+    - Issue Link (URL to the issue)
+    - Summary (issue title/description)
+    - Status (e.g., To Do, In Progress, Done)
+    - Priority (e.g., Highest, High, Medium, Low)
+    - Customer Object ID (custom field)
+    - Assignee (person assigned to the issue)
+    - Created Date (when the issue was created)
+    - Classification (custom field)
 
     Args:
-        driver (WebDriver): Chrome WebDriver instance with JIRA page loaded
+        driver (WebDriver): Chrome WebDriver instance with JIRA page already loaded
 
     Returns:
-        DataFrame: Pandas DataFrame containing the issue keys, links, summaries, statuses,
-        priorities, customer object IDs and assignees
+        DataFrame: Pandas DataFrame containing all extracted issue information
     """
-    print("Extrayendo issues de JIRA desde la tabla...")
+    print("Extracting JIRA issues from the table...")
 
-    # Esperar a que la tabla de issues esté presente
+    # Wait for the issue table to be present in the DOM
     WebDriverWait(driver, 10).until(
         EC.presence_of_element_located((By.ID, "issuetable"))
     )
 
-    # Encontrar todas las filas en el tbody de la tabla
+    # Find all rows in the table body
     rows = driver.find_elements(By.CSS_SELECTOR, "#issuetable tbody tr")
 
+    # Initialize lists to store issue data
     issue_keys = []
     issue_types = []
     issue_links = []
@@ -175,9 +196,9 @@ def extract_jira_issues(driver):
     created_dates = []
     classifications = []
 
-    # Extraer el atributo data-issuekey de cada fila y el link de la issue
+    # Extract data from each row in the issue table
     for row in rows:
-        # Get the issue key
+        # Get the issue key from the row attribute
         issue_key = row.get_attribute("data-issuekey")
 
         # Get the issue link
@@ -205,10 +226,10 @@ def extract_jira_issues(driver):
             # Find the img element inside the issuetype td
             issue_type_img = issue_type_td.find_element(By.CSS_SELECTOR, "img")
 
-            # Get the alt attribute
+            # Get the alt attribute which contains the issue type
             issue_type = issue_type_img.get_attribute("alt").strip()
         except Exception as e:
-            print(f"Error getting issuetype for issue {issue_key}: {e}")
+            print(f"Error getting issue type for issue {issue_key}: {e}")
 
         # Get the summary
         summary = ""
@@ -247,7 +268,7 @@ def extract_jira_issues(driver):
             # Find the img element inside the priority td
             priority_img = priority_td.find_element(By.CSS_SELECTOR, "img")
 
-            # Get the alt attribute
+            # Get the alt attribute which contains the priority
             priority = priority_img.get_attribute("alt").strip()
         except Exception as e:
             print(f"Error getting priority for issue {issue_key}: {e}")
@@ -269,7 +290,7 @@ def extract_jira_issues(driver):
             # Find the td with class "assignee"
             assignee_td = row.find_element(By.CSS_SELECTOR, "td.assignee")
 
-            # Check if there's an <em> element (sin asignar)
+            # Check if there's an <em> element (unassigned)
             try:
                 em_element = assignee_td.find_element(By.CSS_SELECTOR, "em")
                 assignee = em_element.text.strip()
@@ -298,21 +319,22 @@ def extract_jira_issues(driver):
             # Get the datetime attribute
             iso_date = time_element.get_attribute("datetime")
 
-            # Convertir string ISO a objeto datetime de Python sin zona horaria
+            # Convert ISO string to Python datetime object without timezone info
             if iso_date:
                 try:
-                    # Parsear la fecha ISO
+                    # Parse the ISO date
                     dt_with_tz = parser.isoparse(iso_date)
-                    # Convertir a UTC y eliminar la información de zona horaria
+                    # Convert to UTC and remove timezone information
                     created_date = dt_with_tz.astimezone(timezone.utc).replace(
                         tzinfo=None
                     )
                 except Exception as e:
                     print(f"Error converting date format for issue {issue_key}: {e}")
-                    created_date = iso_date  # Fallback al formato original si hay error
-
+                    created_date = (
+                        iso_date  # Fallback to original format if error occurs
+                    )
         except Exception as e:
-            print(f"Error getting Classification for issue {issue_key}: {e}")
+            print(f"Error getting creation date for issue {issue_key}: {e}")
 
         # Get the Classification
         classification = ""
@@ -325,6 +347,7 @@ def extract_jira_issues(driver):
         except Exception as e:
             print(f"Error getting Classification for issue {issue_key}: {e}")
 
+        # Add data to lists if issue_key is valid
         if issue_key:
             issue_keys.append(issue_key)
             issue_types.append(issue_type)
@@ -337,7 +360,7 @@ def extract_jira_issues(driver):
             created_dates.append(created_date)
             classifications.append(classification)
 
-    # Crear un DataFrame con todos los datos recolectados
+    # Create a DataFrame with all collected data
     df = pd.DataFrame(
         {
             "Issue Key": issue_keys,
@@ -353,7 +376,7 @@ def extract_jira_issues(driver):
         }
     )
 
-    print(f"Se encontraron {len(issue_keys)} issues de JIRA")
+    print(f"Found {len(issue_keys)} JIRA issues")
 
     return df
 
@@ -404,93 +427,262 @@ def adjust_column_widths(sheet, max_width=80):
 
 def create_outlook_draft(
     excel_filename,
-    recipient_list="equipo.desarrollo@empresa.com",
+    recipient_list=None,
     subject=None,
     body=None,
 ):
     """
-    Crea un borrador de correo en Outlook con el archivo Excel adjunto.
+    Creates an Outlook draft email with the Excel file attached.
+
+    This function uses the win32com library to interact with Microsoft Outlook
+    and create a draft email with the specified parameters. The email is saved
+    in the Drafts folder for review before sending.
 
     Args:
-        excel_filename (str): Ruta completa al archivo Excel que se adjuntará
-        recipient_list (str, optional): Lista de destinatarios separados por punto y coma
-        subject (str, optional): Asunto del correo
-        body (str, optional): Cuerpo del mensaje en formato HTML
+        excel_filename (str): Full path to the Excel file to be attached
+        recipient_list (str, optional): List of recipients separated by semicolons
+        subject (str, optional): Email subject line
+        body (str, optional): Email body content in HTML format
 
     Returns:
-        bool: True si se creó el borrador correctamente, False en caso contrario
+        bool: True if draft was successfully created, False otherwise
     """
     try:
-        # Verificar que el archivo existe
+        # Verify the file exists
         file_path = Path(excel_filename)
         if not file_path.exists():
-            print(f"Error: No se encontró el archivo {excel_filename}")
+            print(f"Error: File not found: {excel_filename}")
             return False
 
-        print(f"Creando borrador de correo en Outlook...")
+        print(f"Creating Outlook email draft...")
 
-        # Iniciar Outlook
+        # Initialize Outlook
         outlook = win32com.client.Dispatch("Outlook.Application")
 
-        # Crear un nuevo mensaje
+        # Create a new message
         mail = outlook.CreateItem(0)  # 0 = olMailItem
 
-        # Configurar el mensaje
+        # Configure the message
         mail.To = recipient_list
         mail.Subject = subject
         mail.HTMLBody = body
 
-        # Adjuntar el archivo
+        # Attach the file
         attachment = str(file_path.resolve())
         mail.Attachments.Add(attachment)
 
-        # Guardar como borrador
+        # Save as draft
         mail.Save()
 
-        print(f"Puede encontrar el borrador en la carpeta 'Borradores' de Outlook.")
+        print(
+            f"Email draft created successfully. You can find it in your Outlook Drafts folder."
+        )
 
         return True
 
     except Exception as e:
-        print(f"Error al crear el borrador de correo: {e}")
+        print(f"Error creating email draft: {e}")
         return False
 
 
+def generate_excel_report(excel_filename, dataframes_dict):
+    """
+    Generates an Excel file with multiple sheets from the provided dataframes.
+
+    Applies formatting to each sheet:
+    - Bold headers with blue background
+    - Converts links to hyperlinks
+    - Formats date columns appropriately
+    - Adjusts column widths automatically
+    - Adds filtering capability to all columns
+
+    Args:
+        excel_filename (str): Name of the Excel file to create
+        dataframes_dict (dict): Dictionary with sheet names as keys and dataframes as values
+
+    Returns:
+        str: Path to the created Excel file
+    """
+    print(f"\nCreating Excel file with {len(dataframes_dict)} sheets: {excel_filename}")
+
+    # Use ExcelWriter for more control over formatting
+    with pd.ExcelWriter(excel_filename, engine="openpyxl") as writer:
+        # Create a sheet for each DataFrame
+        for sheet_name, df in dataframes_dict.items():
+            print(f"Creating sheet: {sheet_name} with {len(df)} issues")
+
+            # Save DataFrame to its corresponding sheet
+            df.to_excel(writer, sheet_name=sheet_name, index=False)
+
+            # Get the current worksheet object
+            worksheet = writer.sheets[sheet_name]
+
+            # Apply header formatting
+            header_font = Font(bold=True)
+            header_fill = PatternFill(
+                start_color="DDEBF7", end_color="DDEBF7", fill_type="solid"
+            )
+
+            # Format the header row
+            for cell in worksheet[1]:
+                cell.font = header_font
+                cell.fill = header_fill
+
+            # Convert "Issue link" column to hyperlinks and format date columns
+            link_col_index = None
+            date_col_index = None
+
+            # Find relevant columns
+            for i, header in enumerate(worksheet[1], 1):
+                if header.value == "Issue link":
+                    link_col_index = i
+                elif header.value == "Created":
+                    date_col_index = i
+
+            # If link column found, convert to hyperlinks
+            if link_col_index:
+                link_col_letter = get_column_letter(link_col_index)
+
+                # For each data row (starting from 2 since 1 is the header)
+                for row in range(2, worksheet.max_row + 1):
+                    cell = worksheet[f"{link_col_letter}{row}"]
+                    if cell.value and isinstance(cell.value, str):
+                        # Set hyperlink
+                        cell.hyperlink = cell.value
+                        # Apply hyperlink style (blue underlined)
+                        cell.style = "Hyperlink"
+
+            # If date column found, ensure proper formatting
+            if date_col_index:
+                date_col_letter = get_column_letter(date_col_index)
+
+                # For each data row (starting from 2 since 1 is the header)
+                for row in range(2, worksheet.max_row + 1):
+                    cell = worksheet[f"{date_col_letter}{row}"]
+                    if cell.value:
+                        # Apply date and time format
+                        cell.number_format = "yyyy-mm-dd hh:mm:ss"
+
+            # Adjust column widths based on content
+            adjust_column_widths(worksheet)
+
+            # Apply filter to all columns
+            worksheet.auto_filter.ref = worksheet.dimensions
+
+    print(f"Excel file successfully created and formatted: {excel_filename}")
+    return excel_filename
+
+
+def generate_email_draft(excel_filename, dataframes_dict, current_time):
+    """
+    Creates an Outlook draft email with the Excel file attached and dynamic content.
+
+    This function prepares an email draft by:
+    - Loading recipients from environment variables
+    - Generating a dynamic list of sheets with issue counts
+    - Formatting the email body with placeholders
+    - Creating the draft with the Excel file attached
+
+    Args:
+        excel_filename (str): Path to the Excel file to be attached
+        dataframes_dict (dict): Dictionary containing all dataframes with issues data
+        current_time (str): Current timestamp string for subject formatting
+
+    Returns:
+        bool: True if the draft was successfully created, False otherwise
+    """
+    print("\nPreparing email draft with JIRA issues report...")
+
+    # Load recipients from environment variables
+    recipients = load_mail_recipients()
+    subject = os.getenv("MAIL_SUBJECT", "JIRA Issues Report - ")
+    body_template = os.getenv("MAIL_BODY_TEMPLATE", "")
+
+    # Generate list of sheets dynamically
+    pestanas_html = "<ul>\n"
+    for name, df in dataframes_dict.items():
+        pestanas_html += f"<li>{name}: {len(df)} issues</li>\n"
+    pestanas_html += "</ul>"
+
+    # Replace placeholders with dynamic values
+    body_formateado = body_template.format(
+        FECHA=datetime.now().strftime("%d/%m/%Y %H:%M"),
+        NUM_ISSUES=sum(len(df) for df in dataframes_dict.values()),
+        NUM_PESTANAS=len(dataframes_dict),
+        LISTA_PESTANAS=pestanas_html,
+    )
+
+    # Create the Outlook draft
+    result = create_outlook_draft(
+        excel_filename=excel_filename,
+        recipient_list=recipients,
+        subject=f"{subject}{current_time}",
+        body=body_formateado,
+    )
+
+    return result
+
+
 def main():
+    """
+    Main execution function that orchestrates the entire JIRA issues extraction workflow.
+
+    This function performs the following steps:
+    1. Loads environment variables from .env file
+    2. Configures execution parameters (headless mode, timeouts, etc.)
+    3. Loads JIRA filters from environment variables
+    4. Initializes a Chrome WebDriver
+    5. For each JIRA filter:
+       - Builds a URL with the encoded filter
+       - Navigates to the URL
+       - Extracts JIRA issues into a DataFrame
+       - Stores the DataFrame in a dictionary with the filter name as key
+    6. Generates an Excel file with multiple sheets (one per filter)
+    7. Creates an Outlook draft email with the Excel file attached
+    8. Ensures proper cleanup of resources
+
+    The function relies on environment variables defined in .env file:
+    - HEADLESS_MODE: Whether to run Chrome in headless mode (True/False)
+    - WAIT_TIME: Timeout in seconds for page loading
+    - WAIT_ELEMENT: CSS selector of element to wait for
+    - JIRA_URL_BASE: Base URL for JIRA
+    - FILTER_PATTERN: Prefix for JIRA filter environment variables
+    - Various JIRA filters (defined by FILTER_PATTERN)
+    - Email configuration (recipients, subject, body template)
+
+    No parameters or return values as this is the main orchestration function.
+    """
     # Load environment variables from .env file
     load_dotenv()
 
     headless = os.getenv("HEADLESS_MODE", "False").lower() == "true"
     timeout = int(os.getenv("WAIT_TIME", "10"))
-
-    # Element to wait for - can be defined in .env
     wait_element = os.getenv("WAIT_ELEMENT", ".issue-table-wrapper")
-
-    # Get base URL from environment variables
     url_base = os.getenv("JIRA_URL_BASE")
+    filter_pattern = os.getenv("FILTER_PATTERN", "JIRA_FILTER_")
 
-    # Cargar todos los filtros JIRA disponibles
-    jira_filters = load_jira_filters()
-    print(f"Se han encontrado {len(jira_filters)} filtros JIRA para procesar")
+    # Load all JIRA filters
+    jira_filters = load_jira_filters(filter_pattern)
+    print(f"Found {len(jira_filters)} JIRA filters to process")
 
-    # Diccionario para almacenar los dataframes resultantes
+    # Dictionary to store resulting dataframes
     dataframes_dict = {}
 
     # Create the driver
     driver = create_chrome_driver(headless=headless)
 
     try:
-        # Iterar sobre cada filtro JIRA
+        # Iterate through each JIRA filter
         for filter_name, filter_value in jira_filters.items():
-            print(f"\nProcesando filtro: {filter_name}")
+            print(f"\nProcessing filter: {filter_name}")
 
-            # Extraer el nombre de la pestaña (eliminando el prefijo JIRA_FILTER_)
-            sheet_name = filter_name.replace("JIRA_FILTER_", "")
+            # Extract sheet name (removing prefix)
+            sheet_name = filter_name.replace(filter_pattern, "")
 
-            # Codificar el filtro JQL para uso seguro en URL
+            # Encode JQL filter for safe URL use
             filter_encoded = quote(filter_value) if filter_value else ""
 
-            # Construir la URL completa con el filtro codificado
+            # Build complete URL with encoded filter
             complete_url = f"{url_base}?jql={filter_encoded}"
 
             # Navigate to page with explicit wait for the issue table
@@ -498,114 +690,21 @@ def main():
                 driver, complete_url, wait_element=wait_element, timeout=timeout
             )
 
-            # Extraer issues de JIRA en un DataFrame
+            # Extract JIRA issues into a DataFrame
             jira_issues_df = extract_jira_issues(driver)
 
-            # Almacenar el DataFrame en el diccionario usando el nombre de la pestaña como clave
+            # Store DataFrame in dictionary using sheet name as key
             dataframes_dict[sheet_name] = jira_issues_df
 
-        # Generar un nombre de archivo con la fecha actual
+        # Generate filename with current date/time
         current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
         excel_filename = f"jira_issues_{current_time}.xlsx"
 
-        print(
-            f"\nCreando archivo Excel con {len(dataframes_dict)} pestañas: {excel_filename}"
-        )
+        # Generate Excel file with all dataframes
+        excel_filename = generate_excel_report(excel_filename, dataframes_dict)
 
-        # Usar ExcelWriter para tener más control sobre el formato
-        with pd.ExcelWriter(excel_filename, engine="openpyxl") as writer:
-            # Crear una pestaña por cada DataFrame
-            for sheet_name, df in dataframes_dict.items():
-                print(f"Creando pestaña: {sheet_name} con {len(df)} issues")
-
-                # Guardar el DataFrame en su pestaña correspondiente
-                df.to_excel(writer, sheet_name=sheet_name, index=False)
-
-                # Obtener el objeto worksheet actual
-                worksheet = writer.sheets[sheet_name]
-
-                # Aplicar formatos a la cabecera
-                header_font = Font(bold=True)
-                header_fill = PatternFill(
-                    start_color="DDEBF7", end_color="DDEBF7", fill_type="solid"
-                )
-
-                # Dar formato a la fila de encabezado
-                for cell in worksheet[1]:
-                    cell.font = header_font
-                    cell.fill = header_fill
-
-                # Convertir enlaces de la columna "Issue link" a hipervínculos y dar formato a la columna de fechas
-                link_col_index = None
-                date_col_index = None
-
-                # Encontrar las columnas relevantes
-                for i, header in enumerate(worksheet[1], 1):
-                    if header.value == "Issue link":
-                        link_col_index = i
-                    elif header.value == "Created":
-                        date_col_index = i
-
-                # Si encontramos la columna de enlaces, convertirlos a hipervínculos
-                if link_col_index:
-                    link_col_letter = get_column_letter(link_col_index)
-
-                    # Para cada fila de datos (desde la 2 porque la 1 es el encabezado)
-                    for row in range(2, worksheet.max_row + 1):
-                        cell = worksheet[f"{link_col_letter}{row}"]
-                        if cell.value and isinstance(cell.value, str):
-                            # Establecer el hipervínculo
-                            cell.hyperlink = cell.value
-                            # Aplicar estilo de hipervínculo (azul subrayado)
-                            cell.style = "Hyperlink"
-
-                # Si encontramos la columna de fechas, asegurarse de que se muestran correctamente
-                if date_col_index:
-                    date_col_letter = get_column_letter(date_col_index)
-
-                    # Para cada fila de datos (desde la 2 porque la 1 es el encabezado)
-                    for row in range(2, worksheet.max_row + 1):
-                        cell = worksheet[f"{date_col_letter}{row}"]
-                        if cell.value:
-                            # Aplicar formato de fecha y hora
-                            cell.number_format = "yyyy-mm-dd hh:mm:ss"
-
-                # Ajustar el ancho de las columnas basado en el contenido
-                adjust_column_widths(worksheet)
-
-                # Apply a filter to all columns
-                worksheet.auto_filter.ref = worksheet.dimensions
-
-            print(f"Archivo Excel creado y formateado exitosamente: {excel_filename}")
-
-        # Crear borrador de correo en Outlook con el Excel adjunto
-        recipients = load_mail_recipients()
-        # Get subject for email
-        subject = os.getenv("MAIL_SUBJECT")
-
-        # Cargar la plantilla del cuerpo del email
-        body_template = os.getenv("MAIL_BODY_TEMPLATE", "")
-
-        # Generar la lista de pestañas dinámicamente
-        pestanas_html = "<ul>\n"
-        for name, df in dataframes_dict.items():
-            pestanas_html += f"<li>{name}: {len(df)} issues</li>\n"
-        pestanas_html += "</ul>"
-
-        # Reemplazar los marcadores de posición con valores dinámicos
-        body_formateado = body_template.format(
-            FECHA=datetime.now().strftime("%d/%m/%Y %H:%M"),
-            NUM_ISSUES=sum(len(df) for df in dataframes_dict.values()),
-            NUM_PESTANAS=len(dataframes_dict),
-            LISTA_PESTANAS=pestanas_html,
-        )
-
-        create_outlook_draft(
-            excel_filename=excel_filename,
-            recipient_list=recipients,
-            subject=f"{subject}{current_time}",
-            body=body_formateado,
-        )
+        # Generate email draft with Excel attachment
+        generate_email_draft(excel_filename, dataframes_dict, current_time)
 
     finally:
         # Always close the driver to prevent resource leaks
