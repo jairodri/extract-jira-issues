@@ -7,7 +7,7 @@ from selenium.webdriver.common.by import By
 from webdriver_manager.chrome import ChromeDriverManager
 import pandas as pd
 import os
-from dotenv import load_dotenv
+from dotenv import load_dotenv, dotenv_values
 from datetime import datetime, timezone
 from openpyxl import Workbook
 from openpyxl.utils import get_column_letter
@@ -94,6 +94,23 @@ def navigate_to_url(driver, url, wait_element=None, timeout=10):
     print(f"Current page title: {page_title}")
 
     return page_title
+
+
+def load_jira_filters():
+    """
+    Carga todas las variables definidas en el fichero .env que comienzan por "JIRA_FILTER_"
+    y las devuelve en un diccionario.
+
+    Returns:
+        dict: Diccionario con las variables y sus valores.
+    """
+    # Cargar todas las variables del archivo .env
+    env_vars = dotenv_values()
+    # Filtrar las variables que empiezan con "JIRA_FILTER_"
+    filters = {
+        key: value for key, value in env_vars.items() if key.startswith("JIRA_FILTER_")
+    }
+    return filters
 
 
 def extract_jira_issues(driver):
@@ -368,7 +385,8 @@ def main():
 
     # Get URLs from environment variables
     url_base = os.getenv("JIRA_URL_BASE")
-    jira_filter = os.getenv("JIRA_SIN_ASIGNAR")
+    # jira_filter = os.getenv("JIRA_SIN_ASIGNAR")
+    jira_filter = os.getenv("JIRA_FILTER_SIN_CERRAR")
 
     # Codificar el filtro JQL para uso seguro en URL
     jira_filter_encoded = quote(jira_filter) if jira_filter else ""
