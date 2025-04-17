@@ -14,6 +14,8 @@ from openpyxl.utils import get_column_letter
 from openpyxl.styles import Font, PatternFill
 from dateutil import parser
 from urllib.parse import quote
+import win32com.client
+from pathlib import Path
 
 
 def create_chrome_driver(headless=False):
@@ -111,6 +113,33 @@ def load_jira_filters():
         key: value for key, value in env_vars.items() if key.startswith("JIRA_FILTER_")
     }
     return filters
+
+
+def load_mail_recipients():
+    """
+    Carga todas las direcciones de correo definidas en el fichero .env
+    que comienzan por "MAIL_TO_" y devuelve una cadena con todas las direcciones
+    separadas por punto y coma para usar en Outlook.
+
+    Returns:
+        str: Cadena con todas las direcciones de correo separadas por punto y coma.
+    """
+    # Cargar todas las variables del archivo .env
+    env_vars = dotenv_values()
+
+    # Filtrar las variables que empiezan con "MAIL_TO_"
+    mail_vars = {
+        key: value for key, value in env_vars.items() if key.startswith("MAIL_TO_")
+    }
+
+    # Extraer solo los valores (direcciones de correo) y unirlos con punto y coma
+    recipients = ";".join(mail_vars.values())
+
+    print(
+        f"Se encontraron {len(mail_vars)} direcciones de correo para la lista de distribución"
+    )
+
+    return recipients
 
 
 def extract_jira_issues(driver):
@@ -373,6 +402,87 @@ def adjust_column_widths(sheet, max_width=80):
         sheet.column_dimensions[column].width = adjusted_width
 
 
+def create_outlook_draft(excel_filename, recipient_list=None, subject=None, body=None):
+    """
+    Crea un borrador de correo en Outlook con el archivo Excel adjunto.
+
+    Args:
+        excel_filename (str): Ruta completa al archivo Excel que se adjuntará
+        recipient_list (str, optional): Lista de destinatarios separados por punto y coma
+        subject (str, optional): Asunto del correo
+        body (str, optional): Cuerpo del mensaje en formato HTML
+
+    Returns:
+        bool: True si se creó el borrador correctamente, False en caso contrario
+    """
+    try:
+        # Verificar que el archivo existe
+        file_path = Path(excel_filename)
+        if not file_path.exists():
+            print(f"Error: No se encontró el archivo {excel_filename}")
+            return False
+
+        # Valores por defecto
+        if recipient_list is None:
+            recipient_list = "equipo.desarrollo@empresa.com"
+        if subject is None:
+            subject = f"Estado de Issues JIRA - {datetime.now().strftime('%d/%m/%Y')}"
+        if body is None:
+            body = f"""
+            <html>
+            <body>
+            <p>Estimado equipo,</p>
+            <p>Adjunto el informe actualizado de issues en JIRA a fecha {datetime.now().strftime('%d/%m/%Y')}.</p>
+            <p>Este archivo contiene información sobre:</p>
+            <ul>
+                <li>Issues sin asignar</li>
+                <li>Issues en curso</li>
+                <li>Estado actual de cada issue</li>
+            </ul>
+            <p>Por favor, revisen la información y actualicen el estado de sus tareas asignadas.</p>
+            <p>Saludos,</p>
+            <p>Equipo de Gestión</p>
+            </body>
+            </html>
+            """
+
+        print(f"Creando borrador de correo en Outlook...")
+
+        # Iniciar Outlook
+        outlook = win32com.client.Dispatch("Outlook.Application")
+
+        # Crear un nuevo mensaje
+        mail = outlook.CreateItem(0)  # 0 = olMailItem
+
+        # Configurar el mensaje
+        mail.To = recipient_list
+        mail.Subject = subject
+        mail.HTMLBody = body
+
+        # Adjuntar el archivo
+        attachment = str(file_path.resolve())
+        mail.Attachments.Add(attachment)
+
+        # Guardar como borrador
+        mail.Save()
+
+        print(
+            f"Borrador de correo creado exitosamente con el archivo {excel_filename} adjunto."
+        )
+        print(f"Puede encontrar el borrador en la carpeta 'Borradores' de Outlook.")
+
+        return True
+
+    except ImportError:
+        print(
+            "Error: No se pudo importar win32com. Instale la biblioteca con: pip install pywin32"
+        )
+        return False
+    except Exception as e:
+        print(f"Error al crear el borrador de correo: {e}")
+        return False
+
+
 def main():
     # Load environment variables from .env file
     load_dotenv()
@@ -495,120 +605,32 @@ def main():
 
             print(f"Archivo Excel creado y formateado exitosamente: {excel_filename}")
 
+            # Crear borrador de correo en Outlook con el Excel adjunto
+            recipients = load_mail_recipients()
+            create_outlook_draft(
+                excel_filename=excel_filename,
+                recipient_list=recipients,
+                subject=f"Issues JIRA - Informe {current_time}",
+                body=f"""
+                <html>
+                <body>
+                <p>Hola equipo,</p>
+                <p>Adjunto el informe actualizado de issues en JIRA generado el {datetime.now().strftime('%d/%m/%Y %H:%M')}.</p>
+                <p>El informe contiene {sum(len(df) for df in dataframes_dict.values())} issues distribuidas en {len(dataframes_dict)} pestañas:</p>
+                <ul>
+                {"".join(f'<li>{name}: {len(df)} issues</li>' for name, df in dataframes_dict.items())}
+                </ul>
+                <p>Por favor, revisen las tareas pendientes y actualicen el estado en JIRA según corresponda.</p>
+                <p>Saludos,</p>
+                </body>
+                </html>
+                """,
+            )
+
     finally:
         # Always close the driver to prevent resource leaks
         print("Closing browser...")
         driver.quit()
-
-
-# def main():
-#     # Load environment variables from .env file
-#     load_dotenv()
-
-#     headless = os.getenv("HEADLESS_MODE", "False").lower() == "true"
-#     timeout = int(os.getenv("WAIT_TIME", "10"))
-
-#     # Element to wait for - can be defined in .env
-#     wait_element = os.getenv("WAIT_ELEMENT", ".issue-table-wrapper")
-
-#     # Get URLs from environment variables
-#     url_base = os.getenv("JIRA_URL_BASE")
-#     # jira_filter = os.getenv("JIRA_SIN_ASIGNAR")
-#     jira_filter = os.getenv("JIRA_FILTER_SIN_CERRAR")
-
-#     # Codificar el filtro JQL para uso seguro en URL
-#     jira_filter_encoded = quote(jira_filter) if jira_filter else ""
-
-#     # Construir la URL completa con el filtro codificado
-#     complete_url = f"{url_base}?jql={jira_filter_encoded}"
-
-#     # Create the driver
-#     driver = create_chrome_driver(headless=headless)
-
-#     try:
-#         # Navigate to first page with explicit wait for the issue table
-#         navigate_to_url(
-#             driver, complete_url, wait_element=wait_element, timeout=timeout
-#         )
-
-#         # Extraer issues de JIRA en un DataFrame
-#         jira_issues_df = extract_jira_issues(driver)
-
-#         # Generar un nombre de archivo con la fecha actual
-#         current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
-#         excel_filename = f"jira_issues_{current_time}.xlsx"
-
-#         print(f"\nCreando archivo Excel: {excel_filename}")
-
-#         # Usar ExcelWriter para tener más control sobre el formato
-#         with pd.ExcelWriter(excel_filename, engine="openpyxl") as writer:
-#             # Guardar el DataFrame en la hoja "JIRA Issues"
-#             jira_issues_df.to_excel(writer, sheet_name="JIRA Issues", index=False)
-
-#             # Obtener el objeto workbook y la hoja activa
-#             workbook = writer.book
-#             worksheet = writer.sheets["JIRA Issues"]
-
-#             # Aplicar formatos a la cabecera
-#             header_font = Font(bold=True)
-#             header_fill = PatternFill(
-#                 start_color="DDEBF7", end_color="DDEBF7", fill_type="solid"
-#             )
-
-#             # Dar formato a la fila de encabezado
-#             for cell in worksheet[1]:
-#                 cell.font = header_font
-#                 cell.fill = header_fill
-
-#             # Convertir enlaces de la columna "Issue link" a hipervínculos y dar formato a la columna de fechas
-#             link_col_index = None
-#             date_col_index = None
-
-#             # Encontrar las columnas relevantes
-#             for i, header in enumerate(worksheet[1], 1):
-#                 if header.value == "Issue link":
-#                     link_col_index = i
-#                 elif header.value == "Created":
-#                     date_col_index = i
-
-#             # Si encontramos la columna de enlaces, convertirlos a hipervínculos
-#             if link_col_index:
-#                 link_col_letter = get_column_letter(link_col_index)
-
-#                 # Para cada fila de datos (desde la 2 porque la 1 es el encabezado)
-#                 for row in range(2, worksheet.max_row + 1):
-#                     cell = worksheet[f"{link_col_letter}{row}"]
-#                     if cell.value and isinstance(cell.value, str):
-#                         # Establecer el hipervínculo
-#                         cell.hyperlink = cell.value
-#                         # Aplicar estilo de hipervínculo (azul subrayado)
-#                         cell.style = "Hyperlink"
-
-#             # Si encontramos la columna de fechas, asegurarse de que se muestran correctamente
-#             if date_col_index:
-#                 date_col_letter = get_column_letter(date_col_index)
-
-#                 # Para cada fila de datos (desde la 2 porque la 1 es el encabezado)
-#                 for row in range(2, worksheet.max_row + 1):
-#                     cell = worksheet[f"{date_col_letter}{row}"]
-#                     if cell.value:
-#                         # Aplicar formato de fecha y hora
-#                         cell.number_format = "yyyy-mm-dd hh:mm:ss"
-
-#             # Ajustar el ancho de las columnas basado en el contenido
-#             adjust_column_widths(worksheet)
-
-#             # Apply a filter to all columns
-#             worksheet.auto_filter.ref = worksheet.dimensions
-
-#         print(f"Archivo Excel creado y formateado exitosamente: {excel_filename}")
-
-#         # input("Presione Enter para salir...")
-
-#     finally:
-#         # Always close the driver to prevent resource leaks
-#         print("Closing browser...")
-#         driver.quit()
 
 
 if __name__ == "__main__":
