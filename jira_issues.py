@@ -647,6 +647,28 @@ def remove_file(file_path):
         return False
 
 
+def format_sheet_name(name):
+    """
+    Formats a sheet name to make it more readable:
+    - Converts to lowercase
+    - Replaces underscores with spaces
+    - Capitalizes the first letter of each word
+
+    Args:
+        name (str): Original name to format
+
+    Returns:
+        str: Formatted sheet name
+    """
+    # Replace underscores with spaces and convert to lowercase
+    formatted_name = name.lower().replace("_", " ")
+
+    # Capitalize the first letter of each word (title case)
+    formatted_name = formatted_name.title()
+
+    return formatted_name
+
+
 def main():
     """
     Main execution function that orchestrates the entire JIRA issues extraction workflow.
@@ -701,7 +723,8 @@ def main():
             print(f"\nProcessing filter: {filter_name}")
 
             # Extract sheet name (removing prefix)
-            sheet_name = filter_name.replace(filter_pattern, "")
+            raw_sheet_name = filter_name.replace(filter_pattern, "")
+            sheet_name = format_sheet_name(raw_sheet_name)
 
             # Encode JQL filter for safe URL use
             filter_encoded = quote(filter_value) if filter_value else ""
