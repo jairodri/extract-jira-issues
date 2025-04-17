@@ -623,6 +623,30 @@ def generate_email_draft(excel_filename, dataframes_dict, current_time):
     return result
 
 
+def remove_file(file_path):
+    """
+    Removes a file from the filesystem after it's no longer needed.
+
+    Args:
+        file_path (str): Path to the file to be removed
+
+    Returns:
+        bool: True if file was successfully removed, False otherwise
+    """
+    try:
+        # Check if file exists before attempting to delete
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            print(f"File removed successfully: {file_path}")
+            return True
+        else:
+            print(f"File not found: {file_path}")
+            return False
+    except Exception as e:
+        print(f"Error removing file {file_path}: {e}")
+        return False
+
+
 def main():
     """
     Main execution function that orchestrates the entire JIRA issues extraction workflow.
@@ -704,7 +728,18 @@ def main():
         excel_filename = generate_excel_report(excel_filename, dataframes_dict)
 
         # Generate email draft with Excel attachment
-        generate_email_draft(excel_filename, dataframes_dict, current_time)
+        email_success = generate_email_draft(
+            excel_filename, dataframes_dict, current_time
+        )
+
+        # Remove the Excel file after it's been attached to the email
+        if email_success:
+            print(
+                "\nEmail draft created successfully. Removing temporary Excel file..."
+            )
+            remove_file(excel_filename)
+        else:
+            print("\nEmail draft creation failed. Keeping Excel file for reference.")
 
     finally:
         # Always close the driver to prevent resource leaks
