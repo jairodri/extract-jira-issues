@@ -120,19 +120,21 @@ def load_jira_filters(filter_pattern=None):
     return filters
 
 
-def load_mail_recipients():
+def load_mail_recipients(pattern_type="TO"):
     """
-    Loads all email addresses defined in the .env file that begin with the specified
-    pattern (defined by MAIL_PATTERN environment variable) and returns them as a
-    semicolon-separated string for use in Outlook.
+    Loads email addresses defined in the .env file that begin with the specified pattern.
 
-    If MAIL_PATTERN is not defined, uses "MAIL_TO_" as default pattern.
+    Args:
+        pattern_type (str): Type of recipients to load ("TO" or "CC")
 
     Returns:
         str: String containing all email addresses separated by semicolons.
     """
-    # Get the mail pattern from environment variables or use default
-    mail_pattern = os.getenv("MAIL_PATTERN", "MAIL_TO_")
+    # Determine the pattern based on recipient type
+    if pattern_type == "CC":
+        mail_pattern = os.getenv("MAIL_PATTERN_CC", "MAIL_CC_")
+    else:
+        mail_pattern = os.getenv("MAIL_PATTERN", "MAIL_TO_")
 
     # Load all variables from the .env file
     env_vars = dotenv_values()
@@ -146,7 +148,7 @@ def load_mail_recipients():
     recipients = ";".join(mail_vars.values())
 
     print(
-        f"Found {len(mail_vars)} email addresses for distribution list matching pattern '{mail_pattern}'"
+        f"Found {len(mail_vars)} email addresses for {pattern_type} list matching pattern '{mail_pattern}'"
     )
 
     return recipients
@@ -428,6 +430,7 @@ def adjust_column_widths(sheet, max_width=80):
 def create_outlook_draft(
     excel_filename,
     recipient_list=None,
+    cc_list=None,
     subject=None,
     body=None,
 ):
@@ -440,7 +443,8 @@ def create_outlook_draft(
 
     Args:
         excel_filename (str): Full path to the Excel file to be attached
-        recipient_list (str, optional): List of recipients separated by semicolons
+        recipient_list (str, optional): List of primary recipients separated by semicolons
+        cc_list (str, optional): List of CC recipients separated by semicolons
         subject (str, optional): Email subject line
         body (str, optional): Email body content in HTML format
 
@@ -463,7 +467,12 @@ def create_outlook_draft(
         mail = outlook.CreateItem(0)  # 0 = olMailItem
 
         # Configure the message
-        mail.To = recipient_list
+        mail.To = recipient_list if recipient_list else ""
+
+        # Add CC recipients if provided
+        if cc_list:
+            mail.CC = cc_list
+
         mail.Subject = subject
         mail.HTMLBody = body
 
@@ -578,7 +587,7 @@ def generate_email_draft(excel_filename, dataframes_dict, current_time):
     Creates an Outlook draft email with the Excel file attached and dynamic content.
 
     This function prepares an email draft by:
-    - Loading recipients from environment variables
+    - Loading recipients (To and CC) from environment variables
     - Generating a dynamic list of sheets with issue counts
     - Formatting the email body with placeholders
     - Creating the draft with the Excel file attached
@@ -594,7 +603,9 @@ def generate_email_draft(excel_filename, dataframes_dict, current_time):
     print("\nPreparing email draft with JIRA issues report...")
 
     # Load recipients from environment variables
-    recipients = load_mail_recipients()
+    recipients = load_mail_recipients("TO")
+    cc_recipients = load_mail_recipients("CC")
+
     subject = os.getenv("MAIL_SUBJECT", "JIRA Issues Report - ")
     body_template = os.getenv("MAIL_BODY_TEMPLATE", "")
 
@@ -616,6 +627,7 @@ def generate_email_draft(excel_filename, dataframes_dict, current_time):
     result = create_outlook_draft(
         excel_filename=excel_filename,
         recipient_list=recipients,
+        cc_list=cc_recipients,
         subject=f"{subject}{current_time}",
         body=body_formateado,
     )
