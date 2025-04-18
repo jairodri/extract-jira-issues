@@ -55,7 +55,7 @@ def navigate_to_url(driver, url, wait_element=None, timeout=10):
         timeout (int): Maximum time to wait for the element in seconds
 
     Returns:
-        str: The title of the loaded page
+        bool: True if the specified element was found, False otherwise
     """
     print(f"Navigating to: {url}")
     driver.get(url)
@@ -81,20 +81,14 @@ def navigate_to_url(driver, url, wait_element=None, timeout=10):
                 EC.presence_of_element_located((by_method, selector))
             )
             print(f"Element found: {element.tag_name}")
+            return True
         except Exception as e:
-            print(f"Timeout waiting for element: {wait_element}")
-            print(f"Error: {e}")
+            print(
+                f"Element not found: {wait_element} (This may be normal if the filter returned no results)"
+            )
+            return False
     else:
-        # Default wait for page to load if no specific element is specified
-        print("No specific element to wait for. Waiting for page to load...")
-        WebDriverWait(driver, timeout).until(
-            lambda d: d.execute_script("return document.readyState") == "complete"
-        )
-
-    page_title = driver.title
-    print(f"Current page title: {page_title}")
-
-    return page_title
+        return False
 
 
 def load_jira_filters(filter_pattern=None):
@@ -152,6 +146,29 @@ def load_mail_recipients(pattern_type="TO"):
     )
 
     return recipients
+
+
+def create_empty_jira_dataframe():
+    """
+    Creates an empty DataFrame with the same column structure as the one returned by extract_jira_issues
+
+    Returns:
+        DataFrame: Empty pandas DataFrame with JIRA issue columns
+    """
+    return pd.DataFrame(
+        columns=[
+            "Issue Key",
+            "Issue Type",
+            "Issue link",
+            "Summary",
+            "Status",
+            "Priority",
+            "Customer Object ID",
+            "Assignee",
+            "Created",
+            "Classification",
+        ]
+    )
 
 
 def extract_jira_issues(driver):
@@ -745,12 +762,19 @@ def main():
             complete_url = f"{url_base}?jql={filter_encoded}"
 
             # Navigate to page with explicit wait for the issue table
-            navigate_to_url(
+            element_found = navigate_to_url(
                 driver, complete_url, wait_element=wait_element, timeout=timeout
             )
-
-            # Extract JIRA issues into a DataFrame
-            jira_issues_df = extract_jira_issues(driver)
+            # Extract JIRA issues or create empty DataFrame based on navigation result
+            if element_found:
+                # Element found, extract issues normally
+                jira_issues_df = extract_jira_issues(driver)
+            else:
+                # No element found (likely no results), create an empty DataFrame
+                print(
+                    f"No results found for filter '{filter_name}'. Creating empty dataframe."
+                )
+                jira_issues_df = create_empty_jira_dataframe()
 
             # Store DataFrame in dictionary using sheet name as key
             dataframes_dict[sheet_name] = jira_issues_df
