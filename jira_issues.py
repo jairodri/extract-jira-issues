@@ -11,6 +11,7 @@ from dotenv import load_dotenv, dotenv_values
 from datetime import datetime, timezone
 from openpyxl.utils import get_column_letter
 from openpyxl.styles import Font, PatternFill
+from openpyxl.comments import Comment
 from dateutil import parser
 from urllib.parse import quote
 import win32com.client
@@ -524,7 +525,8 @@ def generate_excel_report(excel_filename, dataframes_dict):
 
     Args:
         excel_filename (str): Name of the Excel file to create
-        dataframes_dict (dict): Dictionary with sheet names as keys and dataframes as values
+        dataframes_dict (dict): Dictionary with sheet names as keys and dictionaries
+                              containing "data" (DataFrame) and "filter" (JQL query) as values
 
     Returns:
         str: Path to the created Excel file
@@ -534,7 +536,11 @@ def generate_excel_report(excel_filename, dataframes_dict):
     # Use ExcelWriter for more control over formatting
     with pd.ExcelWriter(excel_filename, engine="openpyxl") as writer:
         # Create a sheet for each DataFrame
-        for sheet_name, df in dataframes_dict.items():
+        for sheet_name, sheet_info in dataframes_dict.items():
+            # Extract DataFrame and filter from the dictionary
+            df = sheet_info["data"]
+            jql_filter = sheet_info["filter"]
+
             print(f"Creating sheet: {sheet_name} with {len(df)} issues")
 
             # Save DataFrame to its corresponding sheet
@@ -542,6 +548,12 @@ def generate_excel_report(excel_filename, dataframes_dict):
 
             # Get the current worksheet object
             worksheet = writer.sheets[sheet_name]
+
+            # Add filter information as a comment in cell A1
+            if worksheet["A1"].comment is None:
+                worksheet["A1"].comment = Comment(
+                    f"Filter: {jql_filter}", "JIRA Extractor"
+                )
 
             # Apply header formatting
             header_font = Font(bold=True)
@@ -626,16 +638,49 @@ def generate_email_draft(excel_filename, dataframes_dict, current_time):
     subject = os.getenv("MAIL_SUBJECT", "JIRA Issues Report - ")
     body_template = os.getenv("MAIL_BODY_TEMPLATE", "")
 
-    # Generate list of sheets dynamically
-    pestanas_html = "<ul>\n"
-    for name, df in dataframes_dict.items():
-        pestanas_html += f"<li>{name}: {len(df)} issues</li>\n"
-    pestanas_html += "</ul>"
+    # Generate table of sheets with issue counts and filters
+    pestanas_html = """
+    <table style="border-collapse: collapse; width: 100%; max-width: 800px; margin-top: 10px; margin-bottom: 20px;">
+        <tr style="background-color: #4472C4; color: white; text-align: left;">
+            <th style="padding: 8px; border: 1px solid #ddd;">Filter Name</th>
+            <th style="padding: 8px; border: 1px solid #ddd;">Issues Count</th>
+            <th style="padding: 8px; border: 1px solid #ddd;">JQL Query</th>
+        </tr>
+    """
+
+    # Counter for alternating row colors
+    row_count = 0
+
+    # Add a row for each filter
+    for name, sheet_info in dataframes_dict.items():
+        df = sheet_info["data"]
+        filter_text = sheet_info["filter"]
+        row_count += 1
+
+        # Alternate row background colors for better readability
+        bg_color = "#E6EBF5" if row_count % 2 == 0 else "#F2F2F2"
+
+        # Add row to table with sheet name, issue count, and filter query
+        pestanas_html += f"""
+        <tr style="background-color: {bg_color};">
+            <td style="padding: 8px; border: 1px solid #ddd;"><b>{name}</b></td>
+            <td style="padding: 8px; border: 1px solid #ddd; text-align: center;">{len(df)}</td>
+            <td style="padding: 8px; border: 1px solid #ddd; font-family: Consolas, monospace; font-size: 90%;">{filter_text}</td>
+        </tr>
+        """
+
+    # Close the table
+    pestanas_html += "</table>"
+
+    # Calculate total issues across all dataframes
+    total_issues = sum(
+        len(sheet_info["data"]) for sheet_info in dataframes_dict.values()
+    )
 
     # Replace placeholders with dynamic values
     body_formateado = body_template.format(
         FECHA=datetime.now().strftime("%d/%m/%Y %H:%M"),
-        NUM_ISSUES=sum(len(df) for df in dataframes_dict.values()),
+        NUM_ISSUES=total_issues,
         NUM_PESTANAS=len(dataframes_dict),
         LISTA_PESTANAS=pestanas_html,
     )
@@ -776,8 +821,11 @@ def main():
                 )
                 jira_issues_df = create_empty_jira_dataframe()
 
-            # Store DataFrame in dictionary using sheet name as key
-            dataframes_dict[sheet_name] = jira_issues_df
+            # Store both DataFrame and filter in dictionary using sheet name as key
+            dataframes_dict[sheet_name] = {
+                "data": jira_issues_df,
+                "filter": filter_value,  # Store the original JQL filter
+            }
 
         # Generate filename with current date/time
         current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
